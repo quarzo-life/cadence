@@ -134,3 +134,22 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Deno
+.deno/
+
+# SQLite (local dev + Railway volume mirror)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Service account / credentials JSON — never commit
+*service-account*.json
+*credentials*.json
+
+# OS
+.DS_Store
+
+# Local tooling state
+.claude/
