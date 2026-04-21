@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "strict": true
+  },
+  "imports": {
+    "@notionhq/client": "npm:@notionhq/client@^2.2.15",
+    "@db/sqlite": "jsr:@db/sqlite@^0.12"
+  },
+  "tasks": {
+    "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-ffi --watch main.ts",
+    "start": "deno run --allow-net --allow-env --allow-read --allow-write --allow-ffi main.ts",
+    "reconcile": "deno run --allow-net --allow-env --allow-read --allow-write --allow-ffi main.ts reconcile",
+    "test": "deno test --allow-all"
+  },
+  "fmt": {
+    "lineWidth": 100,
+    "semiColons": true,
+    "singleQuote": false
+  }
+}
