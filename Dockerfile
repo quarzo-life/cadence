@@ -1,11 +1,16 @@
-FROM denoland/deno:2.7.13
+FROM denoland/deno:latest
 
 WORKDIR /app
 
+RUN deno --version
+
 COPY deno.json deno.lock* ./
+RUN echo "=== deno.lock ===" && cat deno.lock || true
+
 COPY *.ts ./
 COPY *.sql ./
 
+RUN pwd && ls -la
 RUN deno cache main.ts
 
 # /data is provided by a Railway volume mounted at runtime — see
