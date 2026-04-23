@@ -3,8 +3,9 @@
     "strict": true
   },
   "imports": {
-    "@notionhq/client": "npm:@notionhq/client@^2.2.15",
-    "@db/sqlite": "jsr:@db/sqlite@^0.12"
+    "@std/dotenv": "jsr:@std/dotenv",
+    "@notionhq/client": "npm:@notionhq/client@5.20",
+    "@db/sqlite": "jsr:@db/sqlite@^0.13"
   },
   "tasks": {
     "dev": "deno run --allow-net --allow-env --allow-read --allow-write --allow-ffi --watch main.ts",

@@ -13,6 +13,9 @@ const MAX_CAPTURED_ERRORS = 5;
 export interface SyncN2GConfig {
   defaultEventDurationMin: number;
   timezone: string;
+  // Google Calendar event color id (1–24). Applied on create + update so
+  // events stay visually consistent.
+  eventColorId?: string | null;
 }
 
 export interface SyncN2GStats {
@@ -54,11 +57,15 @@ export function buildEventBodyFromTask(
   task: NotionTask,
   cfg: SyncN2GConfig,
 ): EventCreateBody {
-  const common = {
+  const common: Pick<
+    EventCreateBody,
+    "summary" | "description" | "extendedProperties" | "colorId"
+  > = {
     summary: task.title,
     description: `Source Notion: ${task.url}`,
     extendedProperties: { private: { notion_page_id: task.pageId } },
   };
+  if (cfg.eventColorId) common.colorId = cfg.eventColorId;
 
   if (task.isAllDay) {
     // Google all-day events use an exclusive end.date — a one-day event on

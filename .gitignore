@@ -153,3 +153,5 @@ dist
 
 # Local tooling state
 .claude/
+
+data/

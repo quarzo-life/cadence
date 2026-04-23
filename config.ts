@@ -1,3 +1,7 @@
+import { load } from "@std/dotenv";
+
+await load({ export: true });
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface Config {
@@ -21,6 +25,7 @@ export interface Config {
     lookbackMin: number;
     timezone: string;
     reconcileIntervalHours: number;
+    eventColorId: string | null;
   };
   database: {
     path: string;
@@ -75,11 +80,16 @@ function normalizePrivateKey(raw: string): string {
   return raw.replace(/\\n/g, "\n");
 }
 
+// Tolerate raw URL fragments pasted from Notion (`?v=…` view suffix, dashes).
+export function normalizeNotionId(raw: string): string {
+  return raw.split("?")[0].replace(/-/g, "").trim();
+}
+
 export function loadConfig(): Config {
   return {
     notion: {
       token: requiredEnv("NOTION_TOKEN"),
-      databaseId: requiredEnv("NOTION_DATABASE_ID"),
+      databaseId: normalizeNotionId(requiredEnv("NOTION_DATABASE_ID")),
       propTitle: optionalEnv("NOTION_PROP_TITLE", "Name"),
       propDate: optionalEnv("NOTION_PROP_DATE", "Date"),
       propOwner: optionalEnv("NOTION_PROP_OWNER", "Owner"),
@@ -111,6 +121,7 @@ export function loadConfig(): Config {
         Deno.env.get("RECONCILE_INTERVAL_HOURS"),
         24,
       ),
+      eventColorId: optionalEnvOrNull("GOOGLE_EVENT_COLOR_ID"),
     },
     database: {
       path: optionalEnv("DATABASE_PATH", "/data/sync.db"),

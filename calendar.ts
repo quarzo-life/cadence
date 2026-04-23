@@ -33,6 +33,7 @@ export interface EventCreateBody {
   start: EventDateTime;
   end: EventDateTime;
   extendedProperties?: ExtendedProperties;
+  colorId?: string;
 }
 
 export type EventPatchBody = Partial<EventCreateBody>;

@@ -242,6 +242,10 @@ function fakeClient(responders: {
   const calls: FakeCalls = { queries: [], creates: [], updates: [], userLists: [] };
   const client = {
     databases: {
+      retrieve: (_args: unknown) =>
+        Promise.resolve({ data_sources: [{ id: "ds-1", name: "main" }] }),
+    },
+    dataSources: {
       query: (args: unknown) => {
         calls.queries.push(args);
         return Promise.resolve(

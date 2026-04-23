@@ -61,6 +61,7 @@ async function main(): Promise<number> {
       n2g: {
         defaultEventDurationMin: cfg.sync.defaultEventDurationMin,
         timezone: cfg.sync.timezone,
+        eventColorId: cfg.sync.eventColorId,
       },
       timezone: cfg.sync.timezone,
     };

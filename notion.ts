@@ -154,10 +154,16 @@ export function buildDateProperty(
   isAllDay: boolean,
   timezone: string,
 ): { date: { start: string; end: string | null; time_zone: string | null } } {
+  // When `time_zone` is set, Notion rejects start/end with non-zero UTC
+  // offsets (Google returns e.g. "+02:00"). Normalise to UTC `Z`.
+  const start = isAllDay ? dateStart : new Date(dateStart).toISOString();
+  const end = isAllDay || dateEnd === null
+    ? dateEnd
+    : new Date(dateEnd).toISOString();
   return {
     date: {
-      start: dateStart,
-      end: dateEnd,
+      start,
+      end,
       time_zone: isAllDay ? null : timezone,
     },
   };
@@ -178,14 +184,36 @@ export function createNotionService(
     date: { is_not_empty: true },
   };
 
+  // SDK v5 (Notion API 2025-09-03) moved querying off databases onto data
+  // sources. A typical single-source DB has exactly one entry; resolve it
+  // lazily and cache.
+  let dataSourceIdPromise: Promise<string> | null = null;
+  function getDataSourceId(): Promise<string> {
+    if (dataSourceIdPromise) return dataSourceIdPromise;
+    dataSourceIdPromise = (async () => {
+      const db = await client.databases.retrieve({
+        database_id: cfg.databaseId,
+      }) as { data_sources?: Array<{ id: string }> };
+      const first = db.data_sources?.[0]?.id;
+      if (!first) {
+        throw new Error(
+          `notion database ${cfg.databaseId} has no data sources`,
+        );
+      }
+      return first;
+    })();
+    return dataSourceIdPromise;
+  }
+
   async function queryWithFilter(filter: unknown): Promise<NotionTask[]> {
+    const dataSourceId = await getDataSourceId();
     const out: NotionTask[] = [];
     let cursor: string | undefined;
     do {
-      // Notion SDK types for databases.query are narrow and require casts at
-      // the boundary — we pass our raw filter object through.
-      const res = await client.databases.query({
-        database_id: cfg.databaseId,
+      // Notion SDK types for dataSources.query are narrow and require casts
+      // at the boundary — we pass our raw filter object through.
+      const res = await client.dataSources.query({
+        data_source_id: dataSourceId,
         filter: filter as never,
         start_cursor: cursor,
         page_size: 100,
