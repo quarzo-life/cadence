@@ -81,8 +81,11 @@ export function buildEventBodyFromTask(
   // Google rejects dateTime with a UTC offset when timeZone is also set —
   // same constraint as Notion. Normalise to UTC Z.
   const startIso = new Date(task.dateStart).toISOString();
-  const endIso = task.dateEnd
-    ? new Date(task.dateEnd).toISOString()
+  const endNorm = task.dateEnd ? new Date(task.dateEnd).toISOString() : null;
+  // Notion stores start==end when no explicit end is set on a timed event.
+  // A zero-duration event is invalid for Google — apply default duration.
+  const endIso = endNorm && endNorm !== startIso
+    ? endNorm
     : addMinutesToIso(startIso, cfg.defaultEventDurationMin);
   return {
     ...common,
