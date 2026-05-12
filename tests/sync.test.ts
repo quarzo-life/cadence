@@ -63,6 +63,15 @@ function stubCalendar(overrides: Partial<CalendarClient> = {}): CalendarClient {
         end: { date: "2026-04-22" },
         updated: "2026-04-21T12:00:00.000Z",
       } as CalendarEvent),
+    updateEvent: () =>
+      Promise.resolve({
+        id: "evt",
+        status: "confirmed",
+        summary: "x",
+        start: { date: "2026-04-21" },
+        end: { date: "2026-04-22" },
+        updated: "2026-04-21T12:00:00.000Z",
+      } as CalendarEvent),
     patchEvent: () =>
       Promise.resolve({
         id: "evt",

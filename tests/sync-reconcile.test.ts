@@ -92,6 +92,12 @@ function fakeCalendar(opts: {
     },
     getEvent: (email, eventId) =>
       Promise.resolve(opts.getEvent?.(email, eventId) ?? null),
+    updateEvent: (email, eventId, body) => {
+      patchedEvents.push({ email, eventId, body });
+      return Promise.resolve(
+        makeEvent({ id: eventId, summary: body.summary, updated: "2026-04-21T09:45:00.000Z" }),
+      );
+    },
     patchEvent: (email, eventId, body) => {
       patchedEvents.push({ email, eventId, body });
       return Promise.resolve({

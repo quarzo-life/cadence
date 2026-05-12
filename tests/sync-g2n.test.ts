@@ -101,6 +101,9 @@ function fakeCalendar(opts: {
       };
       return Promise.resolve(evt);
     },
+    updateEvent: () => {
+      throw new Error("updateEvent should not be called in g2n");
+    },
     createEvent: () => {
       throw new Error("createEvent should not be called in g2n");
     },

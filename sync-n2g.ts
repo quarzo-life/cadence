@@ -167,7 +167,7 @@ export async function syncTaskN2G(
   if (!row) {
     const existing = await calendar.findByNotionPageId(ownerEmail, task.pageId);
     if (existing) {
-      const patched = await calendar.patchEvent(ownerEmail, existing.id, body);
+      const patched = await calendar.updateEvent(ownerEmail, existing.id, body);
       upsertSyncedTask(db, {
         notionPageId: task.pageId,
         googleEventId: existing.id,
@@ -231,8 +231,8 @@ export async function syncTaskN2G(
     return;
   }
 
-  // (b.3) Same owner — patch.
-  const patched = await calendar.patchEvent(ownerEmail, row.googleEventId, body);
+  // (b.3) Same owner — full replace (PUT) to handle all-day ↔ timed changes.
+  const patched = await calendar.updateEvent(ownerEmail, row.googleEventId, body);
   upsertSyncedTask(db, {
     notionPageId: task.pageId,
     googleEventId: row.googleEventId,

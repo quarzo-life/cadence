@@ -61,6 +61,11 @@ export class SyncTokenExpiredError extends Error {
 
 export interface CalendarClient {
   createEvent(userEmail: string, body: EventCreateBody): Promise<CalendarEvent>;
+  updateEvent(
+    userEmail: string,
+    eventId: string,
+    body: EventCreateBody,
+  ): Promise<CalendarEvent>;
   patchEvent(
     userEmail: string,
     eventId: string,
@@ -140,6 +145,27 @@ export function createCalendarClient(
     if (!res.ok) {
       throw new Error(
         `calendar.createEvent failed for user=${userEmail}: ${res.status} ${await readError(res)}`,
+      );
+    }
+    return (await res.json()) as CalendarEvent;
+  }
+
+  async function updateEvent(
+    userEmail: string,
+    eventId: string,
+    body: EventCreateBody,
+  ): Promise<CalendarEvent> {
+    // PUT replaces the entire event — required when switching between all-day
+    // and timed (PATCH cannot clear start.date when setting start.dateTime).
+    const res = await request(
+      userEmail,
+      "PUT",
+      `/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      { body },
+    );
+    if (!res.ok) {
+      throw new Error(
+        `calendar.updateEvent failed for user=${userEmail} event=${eventId}: ${res.status} ${await readError(res)}`,
       );
     }
     return (await res.json()) as CalendarEvent;
@@ -278,6 +304,7 @@ export function createCalendarClient(
 
   return {
     createEvent,
+    updateEvent,
     patchEvent,
     deleteEvent,
     getEvent,

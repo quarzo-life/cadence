@@ -35,7 +35,7 @@ function task(overrides: Partial<NotionTask> = {}): NotionTask {
 }
 
 interface CalendarCall {
-  op: "create" | "patch" | "delete" | "find";
+  op: "create" | "update" | "patch" | "delete" | "find";
   userEmail: string;
   eventId?: string;
   body?: EventCreateBody | EventPatchBody;
@@ -49,6 +49,7 @@ interface FakeCalendar extends CalendarClient {
 function fakeCalendar(overrides: Partial<{
   findByNotionPageId: (userEmail: string, pageId: string) => CalendarEvent | null;
   createEvent: (userEmail: string, body: EventCreateBody) => CalendarEvent;
+  updateEvent: (userEmail: string, eventId: string, body: EventCreateBody) => CalendarEvent;
   patchEvent: (userEmail: string, eventId: string, body: EventPatchBody) => CalendarEvent;
   deleteEvent: (userEmail: string, eventId: string) => void;
 }> = {}): FakeCalendar {
@@ -74,6 +75,20 @@ function fakeCalendar(overrides: Partial<{
     createEvent: (userEmail, body) => {
       calls.push({ op: "create", userEmail, body });
       return Promise.resolve(overrides.createEvent?.(userEmail, body) ?? newEvent(userEmail, body));
+    },
+    updateEvent: (userEmail, eventId, body) => {
+      calls.push({ op: "update", userEmail, eventId, body });
+      const existing = overrides.updateEvent?.(userEmail, eventId, body);
+      return Promise.resolve(
+        existing ?? {
+          id: eventId,
+          status: "confirmed",
+          summary: body.summary,
+          start: body.start,
+          end: body.end,
+          updated: "2026-04-21T11:00:00.000Z",
+        },
+      );
     },
     patchEvent: (userEmail, eventId, body) => {
       calls.push({ op: "patch", userEmail, eventId, body });
@@ -243,7 +258,7 @@ Deno.test("n2g — fresh task, safety net finds event → patch + insert row", a
     const stats = await run(db, [task()], cal);
     assertEquals(stats.updated, 1);
     assertEquals(stats.created, 0);
-    assertEquals(cal.calls.map((c) => c.op), ["find", "patch"]);
+    assertEquals(cal.calls.map((c) => c.op), ["find", "update"]);
     const patchCall = cal.calls[1];
     assertEquals(patchCall.eventId, "evt-orphan");
     const row = getSyncedTaskByPageId(db, "page-1");
@@ -262,7 +277,7 @@ Deno.test("n2g — existing row, same owner → patch only + row touched", async
     const stats = await run(db, [task({ title: "New title" })], cal);
     assertEquals(stats.updated, 1);
     assertEquals(cal.calls.length, 1);
-    assertEquals(cal.calls[0].op, "patch");
+    assertEquals(cal.calls[0].op, "update");
     assertEquals(cal.calls[0].eventId, "evt-existing");
     assertEquals(cal.calls[0].userEmail, "alice@co.com");
     const row = getSyncedTaskByPageId(db, "page-1");
