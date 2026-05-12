@@ -79,7 +79,7 @@ Deno.test("buildEventBodyFromTask — dated event always carries configured time
   );
   assertEquals(body.start?.timeZone, "Europe/Paris");
   assertEquals(body.end?.timeZone, "Europe/Paris");
-  assertEquals(body.start?.dateTime, "2026-04-21T10:00:00+02:00");
+  assertEquals(body.start?.dateTime, "2026-04-21T08:00:00.000Z");
 });
 
 Deno.test("buildEventBodyFromTask — all-day single day uses exclusive end (start+1)", () => {

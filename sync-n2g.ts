@@ -78,11 +78,15 @@ export function buildEventBodyFromTask(
     };
   }
 
-  const endIso = task.dateEnd ??
-    addMinutesToIso(task.dateStart, cfg.defaultEventDurationMin);
+  // Google rejects dateTime with a UTC offset when timeZone is also set —
+  // same constraint as Notion. Normalise to UTC Z.
+  const startIso = new Date(task.dateStart).toISOString();
+  const endIso = task.dateEnd
+    ? new Date(task.dateEnd).toISOString()
+    : addMinutesToIso(startIso, cfg.defaultEventDurationMin);
   return {
     ...common,
-    start: { dateTime: task.dateStart, timeZone: cfg.timezone },
+    start: { dateTime: startIso, timeZone: cfg.timezone },
     end: { dateTime: endIso, timeZone: cfg.timezone },
   };
 }
