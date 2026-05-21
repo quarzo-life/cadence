@@ -1,22 +1,17 @@
-import type { CalendarClient, CalendarEvent, ListParams } from "./calendar.ts";
-import { SyncTokenExpiredError } from "./calendar.ts";
+import type { CalendarClient, CalendarEvent } from "./calendar.ts";
 import type { NotionService, NotionUser } from "./notion.ts";
 import {
   type Database,
   deleteSyncedTaskByPageId,
-  deleteSyncToken,
   getSyncedTaskByEventId,
-  getSyncToken,
   upsertSyncedTask,
-  upsertSyncToken,
 } from "./db.ts";
 import { logger } from "./logger.ts";
 import { addDaysToYmd } from "./sync-n2g.ts";
 
-// Initial seed window for the first events.list call on a calendar — user
-// override of SPEC §8.6/§10 (30j/365j → 10j/10j). Decision logged in memory.
-export const SEED_LOOKBACK_DAYS = 10;
-export const SEED_LOOKAHEAD_DAYS = 10;
+// Sliding window used on every run — no sync tokens.
+export const WINDOW_PAST_DAYS = 2;
+export const WINDOW_FUTURE_DAYS = 8;
 const MAX_CAPTURED_ERRORS = 5;
 
 export interface SyncG2NConfig {
@@ -128,40 +123,15 @@ async function syncOneCalendar(
   params: SyncG2NParams,
   stats: SyncG2NStats,
 ): Promise<void> {
-  const { db, calendar } = params;
+  const { calendar } = params;
   const now = params.now ? params.now() : new Date();
 
-  function seedParams(): ListParams {
-    const timeMin = new Date(
-      now.getTime() - SEED_LOOKBACK_DAYS * 86_400_000,
-    ).toISOString();
-    const timeMax = new Date(
-      now.getTime() + SEED_LOOKAHEAD_DAYS * 86_400_000,
-    ).toISOString();
-    return { timeMin, timeMax };
-  }
+  const timeMin = new Date(now.getTime() - WINDOW_PAST_DAYS * 86_400_000).toISOString();
+  const timeMax = new Date(now.getTime() + WINDOW_FUTURE_DAYS * 86_400_000).toISOString();
 
-  const existingToken = getSyncToken(db, email);
-  logger.info("g2n_query_start", {
-    email,
-    has_sync_token: existingToken !== null,
-  });
+  logger.info("g2n_query_start", { email, timeMin, timeMax });
 
-  let result: { events: CalendarEvent[]; nextSyncToken: string | null };
-  try {
-    result = await calendar.listAll(
-      email,
-      existingToken ? { syncToken: existingToken } : seedParams(),
-    );
-  } catch (err) {
-    if (err instanceof SyncTokenExpiredError) {
-      logger.warn("g2n_sync_token_expired", { email });
-      deleteSyncToken(db, email);
-      result = await calendar.listAll(email, seedParams());
-    } else {
-      throw err;
-    }
-  }
+  const result = await calendar.listAll(email, { timeMin, timeMax });
 
   for (const event of result.events) {
     stats.seen++;
@@ -176,10 +146,6 @@ async function syncOneCalendar(
       logger.error("g2n_error", { email, event: event.id, error: message });
     }
   }
-
-  if (result.nextSyncToken) {
-    upsertSyncToken(db, email, result.nextSyncToken);
-  }
 }
 
 async function ingestOneEvent(
@@ -191,6 +157,13 @@ async function ingestOneEvent(
 ): Promise<void> {
   const { db, calendar, notion, config } = params;
   const nowIso = (params.now ? params.now() : new Date()).toISOString();
+
+  // (a0) private event — never ingest, skip silently.
+  if (event.visibility === "private" || event.visibility === "confidential") {
+    stats.skipped++;
+    logger.debug("g2n_skip_private", { email, event: event.id });
+    return;
+  }
 
   // (a) cancelled — archive linked Notion page, drop the row.
   if (event.status === "cancelled") {

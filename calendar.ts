@@ -24,6 +24,7 @@ export interface CalendarEvent {
   end: EventDateTime;
   updated: string;
   htmlLink?: string;
+  visibility?: "default" | "public" | "private" | "confidential";
   extendedProperties?: ExtendedProperties;
 }
 

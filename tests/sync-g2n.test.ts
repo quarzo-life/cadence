@@ -3,11 +3,9 @@ import {
   type Database,
   getSyncedTaskByEventId,
   getSyncedTaskByPageId,
-  getSyncToken,
   openDatabase,
   type SyncedTask,
   upsertSyncedTask,
-  upsertSyncToken,
 } from "../db.ts";
 import type {
   CalendarClient,
@@ -16,7 +14,6 @@ import type {
   EventPatchBody,
   ListParams,
 } from "../calendar.ts";
-import { SyncTokenExpiredError } from "../calendar.ts";
 import type {
   CreateTaskArgs,
   NotionService,
@@ -25,9 +22,9 @@ import type {
 } from "../notion.ts";
 import {
   runSyncG2N,
-  SEED_LOOKAHEAD_DAYS,
-  SEED_LOOKBACK_DAYS,
   type SyncG2NConfig,
+  WINDOW_FUTURE_DAYS,
+  WINDOW_PAST_DAYS,
 } from "../sync-g2n.ts";
 
 const CFG: SyncG2NConfig = {
@@ -67,10 +64,7 @@ interface NotionCall {
 }
 
 function fakeCalendar(opts: {
-  listAllResponses: Array<
-    | { events: CalendarEvent[]; nextSyncToken: string | null }
-    | SyncTokenExpiredError
-  >;
+  listAllResponses: Array<{ events: CalendarEvent[]; nextSyncToken: string | null }>;
   patchReturns?: (email: string, eventId: string, body: EventPatchBody) => CalendarEvent;
 }): CalendarClient & {
   listCalls: ListAllCall[];
@@ -85,7 +79,6 @@ function fakeCalendar(opts: {
     listAll: (email, params) => {
       listCalls.push({ email, params });
       const r = opts.listAllResponses[listIdx++];
-      if (r instanceof SyncTokenExpiredError) return Promise.reject(r);
       return Promise.resolve(r);
     },
     patchEvent: (email, eventId, body) => {
@@ -315,7 +308,6 @@ Deno.test("g2n — fresh matching event → create page, seal event, insert row"
     assertEquals(row!.notionPageId, "page-new");
     assertEquals(row!.title, "Q3 planning");
     assertEquals(row!.googleUpdatedAt, "2026-04-21T09:05:00.000Z"); // sealed mtime
-    assertEquals(getSyncToken(db, "alice@co.com"), "tok-next");
   } finally {
     db.close();
   }
@@ -418,13 +410,13 @@ Deno.test("g2n — linked event with same-or-older event.updated → skipped (ow
   }
 });
 
-// -- Seed window ------------------------------------------------------------
+// -- Sliding window ---------------------------------------------------------
 
-Deno.test("g2n — first call (no syncToken) uses seed window now ± 10d", async () => {
+Deno.test("g2n — every call uses sliding window J-2 / J+8, no syncToken", async () => {
   const db = openDatabase(":memory:");
   try {
     const cal = fakeCalendar({
-      listAllResponses: [{ events: [], nextSyncToken: "tok-fresh" }],
+      listAllResponses: [{ events: [], nextSyncToken: null }],
     });
     const notion = fakeNotion({
       users: [{ id: "u1", name: "Alice", email: "alice@co.com" }],
@@ -434,69 +426,13 @@ Deno.test("g2n — first call (no syncToken) uses seed window now ± 10d", async
     const params = cal.listCalls[0].params;
     assertEquals(params.syncToken, undefined);
     const expectedMin = new Date(
-      NOW.getTime() - SEED_LOOKBACK_DAYS * 86_400_000,
+      NOW.getTime() - WINDOW_PAST_DAYS * 86_400_000,
     ).toISOString();
     const expectedMax = new Date(
-      NOW.getTime() + SEED_LOOKAHEAD_DAYS * 86_400_000,
+      NOW.getTime() + WINDOW_FUTURE_DAYS * 86_400_000,
     ).toISOString();
     assertEquals(params.timeMin, expectedMin);
     assertEquals(params.timeMax, expectedMax);
-    assertEquals(getSyncToken(db, "alice@co.com"), "tok-fresh");
-  } finally {
-    db.close();
-  }
-});
-
-Deno.test("g2n — subsequent call uses stored syncToken, not seed window", async () => {
-  const db = openDatabase(":memory:");
-  try {
-    upsertSyncToken(db, "alice@co.com", "tok-saved");
-    const cal = fakeCalendar({
-      listAllResponses: [{ events: [], nextSyncToken: "tok-next" }],
-    });
-    const notion = fakeNotion({
-      users: [{ id: "u1", name: "Alice", email: "alice@co.com" }],
-    });
-    await runWith(db, cal, notion);
-    const params = cal.listCalls[0].params;
-    assertEquals(params.syncToken, "tok-saved");
-    assertEquals(params.timeMin, undefined);
-    assertEquals(params.timeMax, undefined);
-    assertEquals(getSyncToken(db, "alice@co.com"), "tok-next");
-  } finally {
-    db.close();
-  }
-});
-
-// -- 410 → full resync ------------------------------------------------------
-
-Deno.test("g2n — 410 on listAll drops token and retries in full list mode", async () => {
-  const db = openDatabase(":memory:");
-  try {
-    upsertSyncToken(db, "alice@co.com", "tok-expired");
-    const cal = fakeCalendar({
-      listAllResponses: [
-        new SyncTokenExpiredError("alice@co.com"),
-        { events: [makeEvent({ id: "evt-recovered" })], nextSyncToken: "tok-fresh" },
-      ],
-    });
-    const notion = fakeNotion({
-      users: [{ id: "u1", name: "Alice", email: "alice@co.com" }],
-      onCreate: () => ({ pageId: "page-fresh", lastEditedAt: "2026-04-21T12:00:00.000Z" }),
-    });
-    const stats = await runWith(db, cal, notion);
-
-    assertEquals(cal.listCalls.length, 2);
-    // First call used the expired token.
-    assertEquals(cal.listCalls[0].params.syncToken, "tok-expired");
-    // Second call is in seed mode.
-    assertEquals(cal.listCalls[1].params.syncToken, undefined);
-    assert(cal.listCalls[1].params.timeMin !== undefined);
-    assert(cal.listCalls[1].params.timeMax !== undefined);
-
-    // Events from the retry were processed (no double-counting).
-    assertEquals(stats.created, 1);
-    assertEquals(getSyncToken(db, "alice@co.com"), "tok-fresh");
   } finally {
     db.close();
   }
@@ -522,6 +458,32 @@ Deno.test("g2n — error on one event does not block others, capped at 5", async
     assertEquals(stats.errors, 7);
     assertEquals(stats.errorMessages.length, 5);
     assertEquals(stats.created, 0);
+  } finally {
+    db.close();
+  }
+});
+
+// -- Private events ---------------------------------------------------------
+
+Deno.test("g2n — private event is skipped, confidential too", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const cal = fakeCalendar({
+      listAllResponses: [{
+        events: [
+          makeEvent({ id: "evt-private", visibility: "private" }),
+          makeEvent({ id: "evt-confidential", visibility: "confidential" }),
+          makeEvent({ id: "evt-public" }),
+        ],
+        nextSyncToken: null,
+      }],
+    });
+    const notion = fakeNotion({
+      users: [{ id: "u1", name: "Alice", email: "alice@co.com" }],
+    });
+    const stats = await runWith(db, cal, notion);
+    assertEquals(stats.skipped, 2); // private + confidential
+    assertEquals(stats.created, 1); // public one matches keyword
   } finally {
     db.close();
   }
