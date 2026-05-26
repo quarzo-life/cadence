@@ -9,15 +9,17 @@ import {
 import { logger } from "./logger.ts";
 import { addDaysToYmd } from "./sync-n2g.ts";
 
-// Sliding window used on every run — no sync tokens.
+// Fallback constants — overridden by G2N_WINDOW_PAST_DAYS / G2N_WINDOW_FUTURE_DAYS env.
 export const WINDOW_PAST_DAYS = 2;
-export const WINDOW_FUTURE_DAYS = 8;
+export const WINDOW_FUTURE_DAYS = 35;
 const MAX_CAPTURED_ERRORS = 5;
 
 export interface SyncG2NConfig {
   watchEmails: string[];
   syncKeyword: string;
   timezone: string;
+  windowPastDays?: number;
+  windowFutureDays?: number;
 }
 
 export interface SyncG2NStats {
@@ -126,8 +128,10 @@ async function syncOneCalendar(
   const { calendar } = params;
   const now = params.now ? params.now() : new Date();
 
-  const timeMin = new Date(now.getTime() - WINDOW_PAST_DAYS * 86_400_000).toISOString();
-  const timeMax = new Date(now.getTime() + WINDOW_FUTURE_DAYS * 86_400_000).toISOString();
+  const pastDays = params.config.windowPastDays ?? WINDOW_PAST_DAYS;
+  const futureDays = params.config.windowFutureDays ?? WINDOW_FUTURE_DAYS;
+  const timeMin = new Date(now.getTime() - pastDays * 86_400_000).toISOString();
+  const timeMax = new Date(now.getTime() + futureDays * 86_400_000).toISOString();
 
   logger.info("g2n_query_start", { email, timeMin, timeMax });
 

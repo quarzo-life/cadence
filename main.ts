@@ -86,6 +86,8 @@ async function main(): Promise<number> {
           watchEmails: cfg.google.watchEmails,
           syncKeyword: cfg.google.syncKeyword,
           timezone: cfg.sync.timezone,
+          windowPastDays: cfg.sync.windowPastDays,
+          windowFutureDays: cfg.sync.windowFutureDays,
         },
         lookbackMin: cfg.sync.lookbackMin,
         reconcileIntervalHours: cfg.sync.reconcileIntervalHours,

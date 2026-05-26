@@ -26,6 +26,8 @@ export interface Config {
     timezone: string;
     reconcileIntervalHours: number;
     eventColorId: string | null;
+    windowPastDays: number;
+    windowFutureDays: number;
   };
   database: {
     path: string;
@@ -122,6 +124,16 @@ export function loadConfig(): Config {
         24,
       ),
       eventColorId: optionalEnvOrNull("GOOGLE_EVENT_COLOR_ID"),
+      windowPastDays: parsePositiveInt(
+        "G2N_WINDOW_PAST_DAYS",
+        Deno.env.get("G2N_WINDOW_PAST_DAYS"),
+        2,
+      ),
+      windowFutureDays: parsePositiveInt(
+        "G2N_WINDOW_FUTURE_DAYS",
+        Deno.env.get("G2N_WINDOW_FUTURE_DAYS"),
+        35,
+      ),
     },
     database: {
       path: optionalEnv("DATABASE_PATH", "/data/sync.db"),
