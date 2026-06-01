@@ -29,7 +29,6 @@ import {
 
 const CFG: SyncG2NConfig = {
   watchEmails: ["alice@co.com"],
-  syncKeyword: "NOTION",
   timezone: "Europe/Paris",
 };
 
@@ -39,7 +38,7 @@ function makeEvent(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
   return {
     id: "evt-1",
     status: "confirmed",
-    summary: "NOTION: Q3 planning",
+    summary: "Q3 planning",
     start: { dateTime: "2026-04-22T10:00:00.000Z", timeZone: "Europe/Paris" },
     end: { dateTime: "2026-04-22T11:00:00.000Z", timeZone: "Europe/Paris" },
     updated: "2026-04-21T09:00:00.000Z",
@@ -250,7 +249,6 @@ Deno.test("g2n — event carrying notion_page_id is skipped regardless of title"
     const cal = fakeCalendar({
       listAllResponses: [{
         events: [makeEvent({
-          summary: "NOTION: Looks like ingestion",
           extendedProperties: { private: { notion_page_id: "page-owner" } },
         })],
         nextSyncToken: "tok-next",
@@ -331,7 +329,7 @@ Deno.test("g2n — fresh matching event but no Notion user for email → skipped
   }
 });
 
-Deno.test("g2n — fresh event without marker → skipped, no Notion call", async () => {
+Deno.test("g2n — fresh event without keyword prefix → created (all non-private events sync)", async () => {
   const db = openDatabase(":memory:");
   try {
     const cal = fakeCalendar({
@@ -344,8 +342,10 @@ Deno.test("g2n — fresh event without marker → skipped, no Notion call", asyn
       users: [{ id: "u1", name: "Alice", email: "alice@co.com" }],
     });
     const stats = await runWith(db, cal, notion);
-    assertEquals(stats.skipped, 1);
-    assertEquals(notion.calls.filter((c) => c.op === "create").length, 0);
+    assertEquals(stats.created, 1);
+    assertEquals(stats.skipped, 0);
+    const create = notion.calls.find((c) => c.op === "create");
+    assertEquals((create!.args as { title: string }).title, "Daily standup");
   } finally {
     db.close();
   }
@@ -444,7 +444,7 @@ Deno.test("g2n — error on one event does not block others, capped at 5", async
   const db = openDatabase(":memory:");
   try {
     const events = Array.from({ length: 7 }, (_, i) =>
-      makeEvent({ id: `evt-${i}`, summary: "NOTION: fail" }));
+      makeEvent({ id: `evt-${i}`, summary: "fail" }));
     const cal = fakeCalendar({
       listAllResponses: [{ events, nextSyncToken: "tok-next" }],
       patchReturns: () => {

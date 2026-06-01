@@ -16,7 +16,6 @@ const MAX_CAPTURED_ERRORS = 5;
 
 export interface SyncG2NConfig {
   watchEmails: string[];
-  syncKeyword: string;
   timezone: string;
   windowPastDays?: number;
   windowFutureDays?: number;
@@ -201,10 +200,10 @@ async function ingestOneEvent(
 
   const row = getSyncedTaskByEventId(db, event.id);
 
-  // (c.1) no row → keyword test for initial ingestion only.
+  // (c.1) no row → create Notion page for any non-private event.
   if (!row) {
-    const title = matchKeyword(config.syncKeyword, event.summary);
-    if (title === null) {
+    const title = event.summary ?? "";
+    if (!title) {
       stats.skipped++;
       return;
     }

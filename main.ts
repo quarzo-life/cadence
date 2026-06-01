@@ -84,7 +84,6 @@ async function main(): Promise<number> {
         n2g: reconcileConfig.n2g,
         g2n: {
           watchEmails: cfg.google.watchEmails,
-          syncKeyword: cfg.google.syncKeyword,
           timezone: cfg.sync.timezone,
           windowPastDays: cfg.sync.windowPastDays,
           windowFutureDays: cfg.sync.windowFutureDays,

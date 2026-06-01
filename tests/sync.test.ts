@@ -31,7 +31,7 @@ const NOW = new Date("2026-04-21T12:00:00.000Z");
 function baseConfig(overrides: Partial<IncrementalConfig> = {}): IncrementalConfig {
   return {
     n2g: { defaultEventDurationMin: 30, timezone: "Europe/Paris" },
-    g2n: { watchEmails: [], syncKeyword: "NOTION", timezone: "Europe/Paris" },
+    g2n: { watchEmails: [], timezone: "Europe/Paris" },
     lookbackMin: 15,
     reconcileIntervalHours: 24,
     ...overrides,
@@ -241,7 +241,6 @@ Deno.test("runIncremental — aggregates stats from both passes into the run row
       config: baseConfig({
         g2n: {
           watchEmails: ["alice@co.com"],
-          syncKeyword: "NOTION",
           timezone: "Europe/Paris",
         },
       }),

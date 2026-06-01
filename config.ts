@@ -18,7 +18,6 @@ export interface Config {
     saEmail: string;
     saPrivateKey: string;
     watchEmails: string[];
-    syncKeyword: string;
   };
   sync: {
     defaultEventDurationMin: number;
@@ -104,7 +103,6 @@ export function loadConfig(): Config {
       saEmail: requiredEnv("GOOGLE_SA_EMAIL"),
       saPrivateKey: normalizePrivateKey(requiredEnv("GOOGLE_SA_PRIVATE_KEY")),
       watchEmails: parseCsv(optionalEnv("GOOGLE_WATCH_EMAILS", "")),
-      syncKeyword: optionalEnv("GOOGLE_SYNC_KEYWORD", "NOTION"),
     },
     sync: {
       defaultEventDurationMin: parsePositiveInt(
