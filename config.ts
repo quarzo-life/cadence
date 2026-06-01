@@ -13,6 +13,7 @@ export interface Config {
     propOwner: string;
     propStatus: string | null;
     statusArchivedValues: string[];
+    propSource: string | null;
   };
   google: {
     saEmail: string;
@@ -98,6 +99,7 @@ export function loadConfig(): Config {
       statusArchivedValues: parseCsv(
         optionalEnv("NOTION_STATUS_ARCHIVED_VALUES", "Archived,Done,Cancelled"),
       ),
+      propSource: optionalEnvOrNull("NOTION_PROP_SOURCE"),
     },
     google: {
       saEmail: requiredEnv("GOOGLE_SA_EMAIL"),

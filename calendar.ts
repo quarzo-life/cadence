@@ -26,6 +26,8 @@ export interface CalendarEvent {
   htmlLink?: string;
   visibility?: "default" | "public" | "private" | "confidential";
   extendedProperties?: ExtendedProperties;
+  organizer?: { email?: string; self?: boolean };
+  attendees?: Array<{ email: string; self?: boolean; responseStatus?: string }>;
 }
 
 export interface EventCreateBody {

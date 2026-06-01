@@ -113,6 +113,7 @@ export async function runReconcile(params: ReconcileParams): Promise<ReconcileRe
     db,
     calendar: params.calendar,
     config: config.n2g,
+    notion: params.notion,
     now: nowFn,
   };
   for (const task of tasks) {

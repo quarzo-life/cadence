@@ -44,6 +44,7 @@ export interface NotionTask {
   ownerEmail: string | null;
   ownerName: string | null;
   statusValue: string | null;
+  sourceValue: string | null;
   lastEditedAt: string;
   url: string;
   isArchived: boolean;
@@ -61,6 +62,7 @@ export interface NotionSchemaConfig {
   propOwner: string;
   propStatus: string | null;
   statusArchivedValues: string[];
+  propSource: string | null;
 }
 
 export interface NotionServiceConfig {
@@ -75,6 +77,7 @@ export interface CreateTaskArgs {
   isAllDay: boolean;
   ownerUserId: string;
   timezone: string;
+  source?: "google" | "notion";
 }
 
 export interface UpdateTaskArgs {
@@ -84,6 +87,7 @@ export interface UpdateTaskArgs {
   dateEnd: string | null;
   isAllDay: boolean;
   timezone: string;
+  source?: "google" | "notion";
 }
 
 export interface NotionService {
@@ -170,6 +174,12 @@ export function parseNotionPage(
     ? naiveLocalToUTC(rawEnd, tz)
     : rawEnd;
 
+  let sourceValue: string | null = null;
+  if (schema.propSource) {
+    const sp = props[schema.propSource];
+    if (sp && sp.type === "select") sourceValue = sp.select?.name ?? null;
+  }
+
   const pageArchived = Boolean(page.archived);
   const statusArchived = statusValue !== null &&
     schema.statusArchivedValues.some((v) => v === statusValue);
@@ -183,6 +193,7 @@ export function parseNotionPage(
     ownerEmail,
     ownerName,
     statusValue,
+    sourceValue,
     lastEditedAt: page.last_edited_time,
     url: page.url,
     isArchived: pageArchived || statusArchived,
@@ -214,6 +225,12 @@ export function buildTitleProperty(title: string): {
   title: Array<{ type: "text"; text: { content: string } }>;
 } {
   return { title: [{ type: "text", text: { content: title } }] };
+}
+
+export function buildSelectProperty(
+  name: string,
+): { select: { name: string } } {
+  return { select: { name } };
 }
 
 export function createNotionService(
@@ -288,7 +305,7 @@ export function createNotionService(
   async function createTaskPage(
     args: CreateTaskArgs,
   ): Promise<{ pageId: string; lastEditedAt: string }> {
-    const properties = {
+    const properties: Record<string, unknown> = {
       [cfg.schema.propTitle]: buildTitleProperty(args.title),
       [cfg.schema.propDate]: buildDateProperty(
         args.dateStart,
@@ -298,6 +315,11 @@ export function createNotionService(
       ),
       [cfg.schema.propOwner]: { people: [{ id: args.ownerUserId }] },
     };
+    if (cfg.schema.propSource && args.source) {
+      properties[cfg.schema.propSource] = buildSelectProperty(
+        args.source === "google" ? "Google" : "Notion",
+      );
+    }
     const res = await client.pages.create({
       parent: { database_id: cfg.databaseId },
       properties: properties as never,
@@ -308,7 +330,7 @@ export function createNotionService(
   async function updateTaskPage(
     args: UpdateTaskArgs,
   ): Promise<{ lastEditedAt: string }> {
-    const properties = {
+    const properties: Record<string, unknown> = {
       [cfg.schema.propTitle]: buildTitleProperty(args.title),
       [cfg.schema.propDate]: buildDateProperty(
         args.dateStart,
@@ -317,6 +339,11 @@ export function createNotionService(
         args.timezone,
       ),
     };
+    if (cfg.schema.propSource && args.source) {
+      properties[cfg.schema.propSource] = buildSelectProperty(
+        args.source === "google" ? "Google" : "Notion",
+      );
+    }
     const res = await client.pages.update({
       page_id: args.pageId,
       properties: properties as never,

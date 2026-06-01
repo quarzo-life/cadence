@@ -33,6 +33,7 @@ export interface SyncTaskN2GParams {
   db: Database;
   calendar: CalendarClient;
   config: SyncN2GConfig;
+  notion?: NotionService;
   now?: () => Date;
 }
 
@@ -139,17 +140,25 @@ export async function syncTaskN2G(
   const { db, calendar, config } = params;
   const nowIso = (params.now ? params.now() : new Date()).toISOString();
 
+  const row = getSyncedTaskByPageId(db, task.pageId);
+
+  // Golden rule: Google-origin events are never modified by Notion.
+  if (row?.source === "google") {
+    stats.skipped++;
+    logger.debug("n2g_skip_golden_rule", { page: task.pageId });
+    return;
+  }
+
   // (a) Archived or no owner — delete (if tracked) or skip.
   if (task.isArchived || !task.ownerEmail) {
-    const existing = getSyncedTaskByPageId(db, task.pageId);
-    if (existing) {
-      await calendar.deleteEvent(existing.googleCalendarId, existing.googleEventId);
+    if (row) {
+      await calendar.deleteEvent(row.googleCalendarId, row.googleEventId);
       deleteSyncedTaskByPageId(db, task.pageId);
       stats.deleted++;
       logger.info("n2g_event_deleted", {
         page: task.pageId,
-        user: existing.googleCalendarId,
-        event: existing.googleEventId,
+        user: row.googleCalendarId,
+        event: row.googleEventId,
         reason: task.isArchived ? "archived" : "no_owner",
       });
     } else {
@@ -161,12 +170,16 @@ export async function syncTaskN2G(
 
   const ownerEmail = task.ownerEmail;
   const body = buildEventBodyFromTask(task, config);
-  const row = getSyncedTaskByPageId(db, task.pageId);
 
   // (b.1) No row — safety net lookup via privateExtendedProperty, else create.
   if (!row) {
     const existing = await calendar.findByNotionPageId(ownerEmail, task.pageId);
     if (existing) {
+      if ((existing.attendees ?? []).length > 0) {
+        stats.skipped++;
+        logger.debug("n2g_skip_has_attendees", { page: task.pageId, event: existing.id });
+        return;
+      }
       const patched = await calendar.updateEvent(ownerEmail, existing.id, body);
       upsertSyncedTask(db, {
         notionPageId: task.pageId,
@@ -204,11 +217,30 @@ export async function syncTaskN2G(
       event: created.id,
       title: task.title,
     });
+    // Stamp source="Notion" in Notion if the field is configured and not yet set.
+    if (params.notion && task.sourceValue === null) {
+      await params.notion.updateTaskPage({
+        pageId: task.pageId,
+        title: task.title,
+        dateStart: task.dateStart,
+        dateEnd: task.dateEnd,
+        isAllDay: task.isAllDay,
+        timezone: config.timezone,
+        source: "notion",
+      });
+      logger.debug("n2g_source_stamped", { page: task.pageId });
+    }
     return;
   }
 
   // (b.2) Owner changed — delete on old calendar, create on new.
   if (row.googleCalendarId !== ownerEmail) {
+    const currentEvent = await calendar.getEvent(row.googleCalendarId, row.googleEventId);
+    if ((currentEvent?.attendees ?? []).length > 0) {
+      stats.skipped++;
+      logger.debug("n2g_skip_has_attendees", { page: task.pageId, event: row.googleEventId });
+      return;
+    }
     await calendar.deleteEvent(row.googleCalendarId, row.googleEventId);
     const created = await calendar.createEvent(ownerEmail, body);
     upsertSyncedTask(db, {
@@ -231,10 +263,16 @@ export async function syncTaskN2G(
     return;
   }
 
-  // (b.3) Same owner — full replace (PUT) to handle all-day ↔ timed changes.
+  // (b.3) Same owner — check attendees, then full replace.
+  const currentEvent = await calendar.getEvent(ownerEmail, row.googleEventId);
+  if ((currentEvent?.attendees ?? []).length > 0) {
+    stats.skipped++;
+    logger.debug("n2g_skip_has_attendees", { page: task.pageId, event: row.googleEventId });
+    return;
+  }
   const patched = await calendar.updateEvent(ownerEmail, row.googleEventId, body);
   upsertSyncedTask(db, {
-    notionPageId: task.pageId,
+    notionPageId: row.notionPageId,
     googleEventId: row.googleEventId,
     googleCalendarId: row.googleCalendarId,
     source: row.source,

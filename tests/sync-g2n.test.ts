@@ -21,6 +21,7 @@ import type {
   UpdateTaskArgs,
 } from "../notion.ts";
 import {
+  resolveOwner,
   runSyncG2N,
   type SyncG2NConfig,
   WINDOW_FUTURE_DAYS,
@@ -484,6 +485,146 @@ Deno.test("g2n — private event is skipped, confidential too", async () => {
     const stats = await runWith(db, cal, notion);
     assertEquals(stats.skipped, 2); // private + confidential
     assertEquals(stats.created, 1); // public one matches keyword
+  } finally {
+    db.close();
+  }
+});
+
+// -- resolveOwner -----------------------------------------------------------
+
+Deno.test("g2n resolveOwner — quarzo-life.com organizer → organizer is owner", () => {
+  const userByEmail = new Map([
+    ["alice@quarzo-life.com", { id: "u-alice", name: "Alice", email: "alice@quarzo-life.com" }],
+    ["bob@quarzo-life.com", { id: "u-bob", name: "Bob", email: "bob@quarzo-life.com" }],
+  ]);
+  const event = makeEvent({
+    organizer: { email: "alice@quarzo-life.com" },
+    attendees: [
+      { email: "alice@quarzo-life.com" },
+      { email: "external@client.com" },
+    ],
+  });
+  const result = resolveOwner(event, "bob@quarzo-life.com", ["bob@quarzo-life.com", "alice@quarzo-life.com"], userByEmail);
+  assertEquals(result?.id, "u-alice");
+});
+
+Deno.test("g2n resolveOwner — external organizer → first watchEmails attendee", () => {
+  const userByEmail = new Map([
+    ["alice@quarzo-life.com", { id: "u-alice", name: "Alice", email: "alice@quarzo-life.com" }],
+    ["bob@quarzo-life.com", { id: "u-bob", name: "Bob", email: "bob@quarzo-life.com" }],
+  ]);
+  const event = makeEvent({
+    organizer: { email: "client@external.com" },
+    attendees: [
+      { email: "client@external.com" },
+      { email: "bob@quarzo-life.com" },
+      { email: "alice@quarzo-life.com" },
+    ],
+  });
+  // watchEmails order: bob first → bob is selected
+  const result = resolveOwner(event, "alice@quarzo-life.com", ["bob@quarzo-life.com", "alice@quarzo-life.com"], userByEmail);
+  assertEquals(result?.id, "u-bob");
+});
+
+Deno.test("g2n resolveOwner — external organizer, no watchEmails attendee → fallback calendar", () => {
+  const userByEmail = new Map([
+    ["alice@quarzo-life.com", { id: "u-alice", name: "Alice", email: "alice@quarzo-life.com" }],
+  ]);
+  const event = makeEvent({
+    organizer: { email: "client@external.com" },
+    attendees: [
+      { email: "client@external.com" },
+      { email: "other@external.com" },
+    ],
+  });
+  const result = resolveOwner(event, "alice@quarzo-life.com", ["alice@quarzo-life.com"], userByEmail);
+  assertEquals(result?.id, "u-alice");
+});
+
+Deno.test("g2n — fresh event with quarzo-life.com organizer → organizer is Notion owner", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const cal = fakeCalendar({
+      listAllResponses: [{
+        events: [makeEvent({
+          organizer: { email: "alice@quarzo-life.com" },
+          attendees: [
+            { email: "alice@quarzo-life.com" },
+            { email: "external@client.com" },
+          ],
+        })],
+        nextSyncToken: null,
+      }],
+    });
+    const notion = fakeNotion({
+      users: [
+        { id: "u-alice", name: "Alice", email: "alice@quarzo-life.com" },
+        { id: "u-bob", name: "Bob", email: "bob@quarzo-life.com" },
+      ],
+      onCreate: () => ({ pageId: "page-new", lastEditedAt: "2026-04-21T12:00:00.000Z" }),
+    });
+    const stats = await runWith(db, cal, notion, {
+      watchEmails: ["alice@quarzo-life.com", "bob@quarzo-life.com"],
+    });
+    assertEquals(stats.created, 1);
+    const create = notion.calls.find((c) => c.op === "create");
+    assertEquals((create!.args as CreateTaskArgs).ownerUserId, "u-alice");
+    assertEquals((create!.args as CreateTaskArgs).source, "google");
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("g2n — fresh event with external organizer → first watchEmails attendee is owner", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const cal = fakeCalendar({
+      listAllResponses: [{
+        events: [makeEvent({
+          organizer: { email: "client@external.com" },
+          attendees: [
+            { email: "client@external.com" },
+            { email: "bob@quarzo-life.com" },
+          ],
+        })],
+        nextSyncToken: null,
+      }],
+    });
+    const notion = fakeNotion({
+      users: [
+        { id: "u-alice", name: "Alice", email: "alice@quarzo-life.com" },
+        { id: "u-bob", name: "Bob", email: "bob@quarzo-life.com" },
+      ],
+      onCreate: () => ({ pageId: "page-new", lastEditedAt: "2026-04-21T12:00:00.000Z" }),
+    });
+    const stats = await runWith(db, cal, notion, {
+      watchEmails: ["alice@quarzo-life.com", "bob@quarzo-life.com"],
+    });
+    assertEquals(stats.created, 1);
+    const create = notion.calls.find((c) => c.op === "create");
+    assertEquals((create!.args as CreateTaskArgs).ownerUserId, "u-bob");
+    assertEquals((create!.args as CreateTaskArgs).source, "google");
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("g2n — update passes source=google to Notion", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    upsertSyncedTask(db, makeRow({ googleUpdatedAt: "2026-04-21T08:00:00.000Z" }));
+    const cal = fakeCalendar({
+      listAllResponses: [{
+        events: [makeEvent({ summary: "Updated", updated: "2026-04-21T09:00:00.000Z" })],
+        nextSyncToken: null,
+      }],
+    });
+    const notion = fakeNotion({
+      users: [{ id: "u1", name: "Alice", email: "alice@co.com" }],
+    });
+    await runWith(db, cal, notion);
+    const upd = notion.calls.find((c) => c.op === "update");
+    assertEquals((upd!.args as UpdateTaskArgs).source, "google");
   } finally {
     db.close();
   }

@@ -5,10 +5,19 @@ a Google Workspace. Runs as a Deno CLI on a 5-minute cron (Railway).
 
 - **Notion → Google** — every dated task appears on the owner's primary
   calendar. Re-assignment moves the event; archival/deletion removes it.
-- **Google → Notion** — events whose title starts with `NOTION` (configurable,
-  word-boundary) on watched users' calendars become pages in the Notion DB.
+  Updates are skipped if the Google event already has attendees (meeting
+  protection). Events originally created from Google are never modified by
+  Notion (**golden rule**).
+- **Google → Notion** — all non-private events on watched calendars become
+  pages in the Notion DB. Owner resolution:
+  - Organiser from `@quarzo-life.com` → organiser is the Notion owner.
+  - External organiser → first email from `GOOGLE_WATCH_EMAILS` found in the
+    attendees list.
+  - Fallback → the calendar being observed.
   After initial ingestion the link is sealed via
-  `extendedProperties.private.notion_page_id` and the event follows Notion.
+  `extendedProperties.private.notion_page_id`; the `Source` property is set to
+  **Google**. Notion-origin events (carrying `notion_page_id`) are always
+  skipped by G→N.
 - **Reconcile** — a full-scan pass, triggered every 24 h (default) from inside
   incremental runs, catches hard-deletes and drift.
 
@@ -52,9 +61,12 @@ See `SPEC.md` for the full behavioural contract.
 | `Date` | Date | yes | Start/end ↔ event start/end |
 | `Owner` | Person | yes | Owner email = target calendar |
 | `Status` | Status or Select | optional | archived values trigger deletion |
+| `Source` | Select | optional | set to **Google** or **Notion** automatically |
 
-Property names are configurable via env vars. The code **never** modifies the
-Notion schema.
+The `Source` property (configurable via `NOTION_PROP_SOURCE`) is written by the
+sync: **Google** when an event is ingested from Google Calendar, **Notion** when
+a manually-created Notion task is first pushed to Google. Property names are
+configurable via env vars. The code **never** modifies the Notion schema itself.
 
 ## Local development
 
@@ -149,9 +161,23 @@ re-trigger the internal reconcile until the interval has elapsed again.
   invalidates a sync token (quiet periods, API rotation). The code deletes the
   stored token and re-seeds in one shot; logged as a `warn`, not an `error`.
 
+## Sync rules summary
+
+| Direction | Condition | Action |
+| --- | --- | --- |
+| N→G | Event archived or no owner | Delete Google event |
+| N→G | `source = google` in DB | **Skip** (golden rule — Google is authoritative) |
+| N→G | Google event has attendees | **Skip** update (meeting protection) |
+| N→G | Fresh Notion task | Create Google event, stamp `Source = Notion` |
+| N→G | Owner changed | Delete + recreate on new calendar |
+| G→N | Private / confidential | Skip |
+| G→N | Carries `notion_page_id` | Skip (Notion-origin, avoid echo) |
+| G→N | New event | Create Notion page, resolve owner (see above), set `Source = Google` |
+| G→N | Known event, newer mtime | Update Notion page |
+| G→N | Cancelled, page exists | Archive Notion page |
+
 ## Scope — what's not in v1
 
-Recurring events (RRULE), attendees, non-`primary` calendars, reminders, a
-dashboard, versioned migrations, Prometheus metrics, automated backups, and
-rich Notion page bodies on G→N ingestion. See SPEC §13 for the exhaustive
-list.
+Recurring events (RRULE), non-`primary` calendars, reminders, a dashboard,
+versioned migrations, Prometheus metrics, automated backups, and rich Notion
+page bodies on G→N ingestion. See SPEC §13 for the exhaustive list.

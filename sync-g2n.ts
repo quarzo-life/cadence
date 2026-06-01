@@ -75,6 +75,30 @@ export function buildNotionDateFromEvent(
   return { dateStart: start, dateEnd: end, isAllDay: false, timezone };
 }
 
+export function resolveOwner(
+  event: CalendarEvent,
+  calendarEmail: string,
+  watchEmails: string[],
+  userByEmail: Map<string, NotionUser>,
+): NotionUser | null {
+  // Rule 1: quarzo-life.com organizer is always the owner.
+  const organizerEmail = event.organizer?.email;
+  if (organizerEmail?.endsWith("@quarzo-life.com")) {
+    const user = userByEmail.get(organizerEmail);
+    if (user) return user;
+  }
+  // Rule 2: external organizer → first watchEmails attendee (in .env order).
+  const attendeeEmails = new Set((event.attendees ?? []).map((a) => a.email));
+  for (const watchEmail of watchEmails) {
+    if (attendeeEmails.has(watchEmail)) {
+      const user = userByEmail.get(watchEmail);
+      if (user) return user;
+    }
+  }
+  // Fallback: the calendar being observed.
+  return userByEmail.get(calendarEmail) ?? null;
+}
+
 function emptyStats(): SyncG2NStats {
   return {
     seen: 0,
@@ -207,7 +231,7 @@ async function ingestOneEvent(
       stats.skipped++;
       return;
     }
-    const user = userByEmail.get(email);
+    const user = resolveOwner(event, email, config.watchEmails, userByEmail);
     if (!user) {
       stats.skipped++;
       logger.warn("g2n_owner_not_found", { email, event: event.id });
@@ -224,6 +248,7 @@ async function ingestOneEvent(
       isAllDay,
       ownerUserId: user.id,
       timezone,
+      source: "google",
     });
 
     // Immediately seal the event — prevents re-ingestion even if the SQLite
@@ -279,6 +304,7 @@ async function ingestOneEvent(
     dateEnd,
     isAllDay,
     timezone,
+    source: "google",
   });
   upsertSyncedTask(db, {
     notionPageId: row.notionPageId,

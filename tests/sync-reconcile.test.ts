@@ -33,6 +33,7 @@ function taskFixture(overrides: Partial<NotionTask> = {}): NotionTask {
     ownerEmail: "alice@co.com",
     ownerName: "Alice",
     statusValue: null,
+    sourceValue: null,
     lastEditedAt: "2026-04-21T09:00:00.000Z",
     url: "https://www.notion.so/page-1",
     isArchived: false,

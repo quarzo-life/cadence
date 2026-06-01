@@ -13,7 +13,8 @@ import type {
   EventPatchBody,
 } from "../calendar.ts";
 import type { NotionService, NotionTask } from "../notion.ts";
-import { runSyncN2G, type SyncN2GConfig } from "../sync-n2g.ts";
+import { runSyncN2G, syncTaskN2G, type SyncN2GConfig } from "../sync-n2g.ts";
+import type { UpdateTaskArgs } from "../notion.ts";
 
 const CFG: SyncN2GConfig = { defaultEventDurationMin: 30, timezone: "Europe/Paris" };
 
@@ -27,6 +28,7 @@ function task(overrides: Partial<NotionTask> = {}): NotionTask {
     ownerEmail: "alice@co.com",
     ownerName: "Alice",
     statusValue: null,
+    sourceValue: null,
     lastEditedAt: "2026-04-21T09:00:00.000Z",
     url: "https://www.notion.so/page-1",
     isArchived: false,
@@ -35,7 +37,7 @@ function task(overrides: Partial<NotionTask> = {}): NotionTask {
 }
 
 interface CalendarCall {
-  op: "create" | "update" | "patch" | "delete" | "find";
+  op: "create" | "update" | "patch" | "delete" | "find" | "get";
   userEmail: string;
   eventId?: string;
   body?: EventCreateBody | EventPatchBody;
@@ -52,6 +54,7 @@ function fakeCalendar(overrides: Partial<{
   updateEvent: (userEmail: string, eventId: string, body: EventCreateBody) => CalendarEvent;
   patchEvent: (userEmail: string, eventId: string, body: EventPatchBody) => CalendarEvent;
   deleteEvent: (userEmail: string, eventId: string) => void;
+  getEvent: (userEmail: string, eventId: string) => CalendarEvent | null;
 }> = {}): FakeCalendar {
   const calls: CalendarCall[] = [];
   let nextId = 100;
@@ -109,8 +112,20 @@ function fakeCalendar(overrides: Partial<{
       overrides.deleteEvent?.(userEmail, eventId);
       return Promise.resolve();
     },
-    getEvent: () => {
-      throw new Error("getEvent should not be called in n2g");
+    getEvent: (userEmail, eventId) => {
+      calls.push({ op: "get", userEmail, eventId });
+      if (overrides.getEvent) {
+        return Promise.resolve(overrides.getEvent(userEmail, eventId));
+      }
+      // Default: return event without attendees.
+      return Promise.resolve({
+        id: eventId,
+        status: "confirmed" as const,
+        summary: "x",
+        start: { dateTime: "2026-04-21T10:00:00.000Z" },
+        end: { dateTime: "2026-04-21T10:30:00.000Z" },
+        updated: "2026-04-21T10:00:00.000Z",
+      });
     },
     listPage: () => {
       throw new Error("listPage should not be called in n2g");
@@ -129,7 +144,7 @@ function fakeNotion(tasks: NotionTask[]): NotionService {
       throw new Error("not used in n2g");
     },
     updateTaskPage: () => {
-      throw new Error("not used in n2g");
+      return Promise.resolve({ lastEditedAt: "2026-04-21T12:00:00.000Z" });
     },
     archiveTaskPage: () => {
       throw new Error("not used in n2g");
@@ -276,10 +291,9 @@ Deno.test("n2g — existing row, same owner → patch only + row touched", async
     const cal = fakeCalendar();
     const stats = await run(db, [task({ title: "New title" })], cal);
     assertEquals(stats.updated, 1);
-    assertEquals(cal.calls.length, 1);
-    assertEquals(cal.calls[0].op, "update");
-    assertEquals(cal.calls[0].eventId, "evt-existing");
-    assertEquals(cal.calls[0].userEmail, "alice@co.com");
+    assertEquals(cal.calls.map((c) => c.op), ["get", "update"]);
+    assertEquals(cal.calls[1].eventId, "evt-existing");
+    assertEquals(cal.calls[1].userEmail, "alice@co.com");
     const row = getSyncedTaskByPageId(db, "page-1");
     assertEquals(row?.title, "New title");
     assertEquals(row?.googleEventId, "evt-existing");
@@ -298,7 +312,7 @@ Deno.test("n2g — existing row, different owner → delete old + create new + m
     const stats = await run(db, [task({ ownerEmail: "bob@co.com" })], cal);
     assertEquals(stats.moved, 1);
     const ops = cal.calls.map((c) => `${c.op}:${c.userEmail}`);
-    assertEquals(ops, ["delete:alice@co.com", "create:bob@co.com"]);
+    assertEquals(ops, ["get:alice@co.com", "delete:alice@co.com", "create:bob@co.com"]);
     const row = getSyncedTaskByPageId(db, "page-1");
     assertEquals(row?.googleCalendarId, "bob@co.com");
     assert(row!.googleEventId !== "evt-existing");
@@ -365,6 +379,138 @@ Deno.test("n2g — body sent for dated event carries timezone on start and end",
       timeZone: "Europe/Paris",
     });
     assertEquals(body.extendedProperties?.private?.notion_page_id, "page-1");
+  } finally {
+    db.close();
+  }
+});
+
+// -- Golden rule ------------------------------------------------------------
+
+Deno.test("n2g — source=google row → skip always (golden rule)", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    upsertSyncedTask(db, makeRow({ source: "google" }));
+    const cal = fakeCalendar();
+    const stats = await run(db, [task({ title: "Modified" })], cal);
+    assertEquals(stats.skipped, 1);
+    assertEquals(stats.updated, 0);
+    assertEquals(cal.calls.length, 0);
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("n2g — source=google row, archived task → skip (golden rule protects delete too)", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    upsertSyncedTask(db, makeRow({ source: "google" }));
+    const cal = fakeCalendar();
+    const stats = await run(db, [task({ isArchived: true })], cal);
+    assertEquals(stats.skipped, 1);
+    assertEquals(stats.deleted, 0);
+    assertEquals(cal.calls.length, 0);
+    // Row still exists — golden rule doesn't delete it.
+    assert(getSyncedTaskByPageId(db, "page-1") !== null);
+  } finally {
+    db.close();
+  }
+});
+
+// -- Attendees rule ----------------------------------------------------------
+
+Deno.test("n2g — existing row with attendees on Google event → skip update", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    upsertSyncedTask(db, makeRow());
+    const cal = fakeCalendar({
+      getEvent: (_email, eventId) => ({
+        id: eventId,
+        status: "confirmed" as const,
+        summary: "meeting",
+        start: { dateTime: "2026-04-21T10:00:00.000Z" },
+        end: { dateTime: "2026-04-21T11:00:00.000Z" },
+        updated: "2026-04-21T10:00:00.000Z",
+        attendees: [
+          { email: "alice@co.com" },
+          { email: "bob@co.com" },
+        ],
+      }),
+    });
+    const stats = await run(db, [task({ title: "Modified" })], cal);
+    assertEquals(stats.skipped, 1);
+    assertEquals(stats.updated, 0);
+    assertEquals(cal.calls.map((c) => c.op), ["get"]);
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("n2g — existing row without attendees on Google event → update proceeds", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    upsertSyncedTask(db, makeRow());
+    const cal = fakeCalendar(); // default getEvent returns event without attendees
+    const stats = await run(db, [task({ title: "Modified" })], cal);
+    assertEquals(stats.updated, 1);
+    assertEquals(cal.calls.map((c) => c.op), ["get", "update"]);
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("n2g — owner change with attendees on old Google event → skip move", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    upsertSyncedTask(db, makeRow());
+    const cal = fakeCalendar({
+      getEvent: (_email, eventId) => ({
+        id: eventId,
+        status: "confirmed" as const,
+        summary: "meeting",
+        start: { dateTime: "2026-04-21T10:00:00.000Z" },
+        end: { dateTime: "2026-04-21T11:00:00.000Z" },
+        updated: "2026-04-21T10:00:00.000Z",
+        attendees: [{ email: "alice@co.com" }, { email: "charlie@co.com" }],
+      }),
+    });
+    const stats = await run(db, [task({ ownerEmail: "bob@co.com" })], cal);
+    assertEquals(stats.skipped, 1);
+    assertEquals(stats.moved, 0);
+    assertEquals(cal.calls.map((c) => c.op), ["get"]);
+  } finally {
+    db.close();
+  }
+});
+
+Deno.test("n2g — fresh creation stamps source=Notion when sourceValue is null", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    let updateCalled = false;
+    let updateArgs: UpdateTaskArgs | undefined;
+    const cal = fakeCalendar();
+    const notion = {
+      queryTasksSince: () => Promise.resolve([task()]),
+      queryAllTasks: () => Promise.resolve([task()]),
+      createTaskPage: () => { throw new Error("not used"); },
+      updateTaskPage: (args: UpdateTaskArgs) => {
+        updateCalled = true;
+        updateArgs = args;
+        return Promise.resolve({ lastEditedAt: "2026-04-21T12:00:00.000Z" });
+      },
+      archiveTaskPage: () => { throw new Error("not used"); },
+      listUsers: () => Promise.resolve([]),
+    };
+    await runSyncN2G({
+      db,
+      notion,
+      calendar: cal,
+      config: CFG,
+      sinceIso: "2026-04-21T00:00:00.000Z",
+      now: () => new Date("2026-04-21T12:00:00.000Z"),
+    });
+    assert(updateCalled, "updateTaskPage should have been called to stamp source");
+    assertEquals(updateArgs?.source, "notion");
+    assertEquals(updateArgs?.pageId, "page-1");
   } finally {
     db.close();
   }

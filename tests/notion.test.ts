@@ -14,6 +14,7 @@ const SCHEMA: NotionSchemaConfig = {
   propOwner: "Owner",
   propStatus: "Status",
   statusArchivedValues: ["Archived", "Done", "Cancelled"],
+  propSource: null,
 };
 
 function pageFixture(overrides: Record<string, unknown> = {}): unknown {
