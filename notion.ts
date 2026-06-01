@@ -95,6 +95,36 @@ export interface NotionService {
   listUsers(): Promise<NotionUser[]>;
 }
 
+function isOffsetted(iso: string): boolean {
+  return iso.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(iso);
+}
+
+// Notion returns datetimes as local time without UTC offset (e.g. "2026-06-01T10:00:00.000")
+// when time_zone is set. Convert to UTC ISO so all downstream code can treat dateStart as UTC.
+function naiveLocalToUTC(localISO: string, timezone: string): string {
+  const ref = new Date(localISO + "Z"); // treat as UTC (reference, intentionally wrong)
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = new Map(
+    fmt.formatToParts(ref).map(({ type, value }) => [type, value] as const),
+  );
+  const h = parts.get("hour") === "24" ? "00" : parts.get("hour")!;
+  const tzLocal = new Date(
+    `${parts.get("year")}-${parts.get("month")}-${parts.get("day")}T${h}:${parts.get("minute")}:${parts.get("second")}Z`,
+  );
+  // offset = how many ms the timezone is ahead of UTC at this moment
+  const offset = tzLocal.getTime() - ref.getTime();
+  return new Date(ref.getTime() - offset).toISOString();
+}
+
 export function parseNotionPage(
   rawPage: unknown,
   schema: NotionSchemaConfig,
@@ -125,9 +155,20 @@ export function parseNotionPage(
     else if (s && s.type === "select") statusValue = s.select?.name ?? null;
   }
 
-  const dateStart = dateValue.start;
-  const dateEnd = dateValue.end;
-  const isAllDay = !dateStart.includes("T");
+  const rawStart = dateValue.start;
+  const rawEnd = dateValue.end;
+  const tz = dateValue.time_zone;
+  const isAllDay = !rawStart.includes("T");
+  // Notion returns datetimes without UTC offset when time_zone is set
+  // (e.g. "2026-06-01T10:00:00.000"). Without an explicit offset, JS parses
+  // these as server-local time (UTC on Railway), producing a +2h shift for
+  // Paris events. Convert to unambiguous UTC here.
+  const dateStart = !isAllDay && tz && !isOffsetted(rawStart)
+    ? naiveLocalToUTC(rawStart, tz)
+    : rawStart;
+  const dateEnd = rawEnd !== null && !isAllDay && tz && !isOffsetted(rawEnd)
+    ? naiveLocalToUTC(rawEnd, tz)
+    : rawEnd;
 
   const pageArchived = Boolean(page.archived);
   const statusArchived = statusValue !== null &&

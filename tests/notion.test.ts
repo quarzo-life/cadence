@@ -407,3 +407,81 @@ Deno.test("listUsers — filters out bots, surfaces null email", async () => {
     { id: "u3", name: "NoEmail", email: null },
   ]);
 });
+
+// -- Timezone conversion for naive Notion datetimes ---------------------------
+
+Deno.test("parseNotionPage — naive datetime with time_zone converts to UTC (summer +2h)", () => {
+  // Notion returns "2026-06-01T10:00:00.000" (no offset) with time_zone: "Europe/Paris"
+  // Europe/Paris in June = CEST = UTC+2, so 10:00 Paris = 08:00 UTC.
+  const task = parseNotionPage(
+    pageFixture({
+      properties: {
+        ...(pageFixture() as { properties: Record<string, unknown> }).properties,
+        Date: {
+          type: "date",
+          date: { start: "2026-06-01T10:00:00.000", end: null, time_zone: "Europe/Paris" },
+        },
+      },
+    }),
+    SCHEMA,
+  );
+  assertEquals(task?.dateStart, "2026-06-01T08:00:00.000Z");
+  assertEquals(task?.isAllDay, false);
+});
+
+Deno.test("parseNotionPage — naive datetime with time_zone converts end date too", () => {
+  const task = parseNotionPage(
+    pageFixture({
+      properties: {
+        ...(pageFixture() as { properties: Record<string, unknown> }).properties,
+        Date: {
+          type: "date",
+          date: {
+            start: "2026-06-01T10:00:00.000",
+            end: "2026-06-01T11:00:00.000",
+            time_zone: "Europe/Paris",
+          },
+        },
+      },
+    }),
+    SCHEMA,
+  );
+  assertEquals(task?.dateStart, "2026-06-01T08:00:00.000Z");
+  assertEquals(task?.dateEnd, "2026-06-01T09:00:00.000Z");
+});
+
+Deno.test("parseNotionPage — datetime already has Z offset — untouched", () => {
+  const task = parseNotionPage(
+    pageFixture({
+      properties: {
+        ...(pageFixture() as { properties: Record<string, unknown> }).properties,
+        Date: {
+          type: "date",
+          date: { start: "2026-06-01T08:00:00.000Z", end: null, time_zone: "Europe/Paris" },
+        },
+      },
+    }),
+    SCHEMA,
+  );
+  assertEquals(task?.dateStart, "2026-06-01T08:00:00.000Z");
+});
+
+Deno.test("parseNotionPage — datetime with explicit +02:00 offset — untouched", () => {
+  const task = parseNotionPage(
+    pageFixture({
+      properties: {
+        ...(pageFixture() as { properties: Record<string, unknown> }).properties,
+        Date: {
+          type: "date",
+          date: {
+            start: "2026-06-01T10:00:00.000+02:00",
+            end: null,
+            time_zone: "Europe/Paris",
+          },
+        },
+      },
+    }),
+    SCHEMA,
+  );
+  assertEquals(task?.dateStart, "2026-06-01T10:00:00.000+02:00");
+});
