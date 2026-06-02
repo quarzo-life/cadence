@@ -30,6 +30,7 @@ interface RawPerson {
 
 type RawProperty =
   | { type: "title"; title: RawRichText[] }
+  | { type: "rich_text"; rich_text: RawRichText[] }
   | { type: "date"; date: RawDateValue | null }
   | { type: "people"; people: RawPerson[] }
   | { type: "status"; status: { name: string } | null }
@@ -63,6 +64,7 @@ export interface NotionSchemaConfig {
   propStatus: string | null;
   statusArchivedValues: string[];
   propSource: string | null;
+  propSourceType: "select" | "rich_text";
 }
 
 export interface NotionServiceConfig {
@@ -178,6 +180,7 @@ export function parseNotionPage(
   if (schema.propSource) {
     const sp = props[schema.propSource];
     if (sp && sp.type === "select") sourceValue = sp.select?.name ?? null;
+    else if (sp && sp.type === "rich_text") sourceValue = sp.rich_text[0]?.plain_text ?? null;
   }
 
   const pageArchived = Boolean(page.archived);
@@ -231,6 +234,16 @@ export function buildSelectProperty(
   name: string,
 ): { select: { name: string } } {
   return { select: { name } };
+}
+
+export function buildSourceProperty(
+  value: string,
+  type: "select" | "rich_text",
+): unknown {
+  if (type === "rich_text") {
+    return { rich_text: [{ type: "text", text: { content: value } }] };
+  }
+  return { select: { name: value } };
 }
 
 export function createNotionService(
@@ -316,8 +329,9 @@ export function createNotionService(
       [cfg.schema.propOwner]: { people: [{ id: args.ownerUserId }] },
     };
     if (cfg.schema.propSource && args.source) {
-      properties[cfg.schema.propSource] = buildSelectProperty(
+      properties[cfg.schema.propSource] = buildSourceProperty(
         args.source === "google" ? "Google" : "Notion",
+        cfg.schema.propSourceType,
       );
     }
     const res = await client.pages.create({
@@ -340,8 +354,9 @@ export function createNotionService(
       ),
     };
     if (cfg.schema.propSource && args.source) {
-      properties[cfg.schema.propSource] = buildSelectProperty(
+      properties[cfg.schema.propSource] = buildSourceProperty(
         args.source === "google" ? "Google" : "Notion",
+        cfg.schema.propSourceType,
       );
     }
     const res = await client.pages.update({

@@ -14,6 +14,7 @@ export interface Config {
     propStatus: string | null;
     statusArchivedValues: string[];
     propSource: string | null;
+    propSourceType: "select" | "rich_text";
   };
   google: {
     saEmail: string;
@@ -100,6 +101,9 @@ export function loadConfig(): Config {
         optionalEnv("NOTION_STATUS_ARCHIVED_VALUES", "Archived,Done,Cancelled"),
       ),
       propSource: optionalEnvOrNull("NOTION_PROP_SOURCE"),
+      propSourceType: optionalEnv("NOTION_PROP_SOURCE_TYPE", "select") === "rich_text"
+        ? "rich_text"
+        : "select",
     },
     google: {
       saEmail: requiredEnv("GOOGLE_SA_EMAIL"),

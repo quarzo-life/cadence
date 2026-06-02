@@ -55,6 +55,7 @@ async function main(): Promise<number> {
         propStatus: cfg.notion.propStatus,
         statusArchivedValues: cfg.notion.statusArchivedValues,
         propSource: cfg.notion.propSource,
+        propSourceType: cfg.notion.propSourceType,
       },
     });
 
