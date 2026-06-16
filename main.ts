@@ -101,6 +101,11 @@ async function main(): Promise<number> {
 
     return result.status === "success" ? 0 : 1;
   } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === "notionhq_client_request_timeout") {
+      logger.warn("notion_timeout", { message: (err as Error).message });
+      return 0;
+    }
     logger.error("run_fatal", {
       error: (err as Error).message,
       stack: (err as Error).stack ?? "",
